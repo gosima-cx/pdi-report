@@ -95,6 +95,16 @@
     font-size:13px;line-height:1;padding:0;
     display:flex;align-items:center;justify-content:center;
   }
+  .thumb-wrap{display:flex;flex-direction:column;gap:4px;}
+  .comment-input{
+    width:100%;
+    font-size:11px;
+    font-weight:400;
+    letter-spacing:0;
+    padding:5px 6px;
+    border:1px solid var(--border);
+    border-radius:6px;
+  }
   .damage-block{
     border:1px dashed var(--border);
     border-radius:10px;
@@ -132,16 +142,6 @@
 </header>
 
 <main>
-
-  <section class="card" id="settings-section">
-    <h2>⚙ 設定（初回のみ）</h2>
-    <p class="hint">Google Apps Scriptで発行したウェブアプリURLを設定してください。この端末に保存され、次回以降は入力不要です。</p>
-    <div class="row">
-      <input type="text" id="gasUrl" placeholder="https://script.google.com/macros/s/.../exec" style="font-size:13px;letter-spacing:0;font-weight:400;">
-      <button class="btn-outline" id="saveGasUrlBtn" style="white-space:nowrap;">保存</button>
-    </div>
-    <p class="hint" id="gasUrlStatus" style="margin:6px 0 0;"></p>
-  </section>
 
   <section class="card" id="vin-section">
     <h2>① 車台番号ラベル</h2>
@@ -194,6 +194,7 @@
   "use strict";
 
   const GAS_URL_KEY = 'pdi_gas_url';
+  // 初期設定済みのGAS WebアプリURL（設定欄で上書きした場合はそちらが優先されます）
   const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbygzu_Mld3VVfyLdz0efLF75nMaJga5TjQwq_m_tMEJeKchwX_jsGVgGXD1pIXIbR78vw/exec';
 
   const state = {
@@ -288,14 +289,20 @@
     list.innerHTML = "";
     empty.style.display = state.overview.length ? "none" : "block";
     state.overview.forEach(p=>{
-      const div = document.createElement('div');
-      div.className = "thumb";
-      div.innerHTML = `<img src="${p.dataUrl}"><button class="del" data-id="${p.id}">×</button>`;
-      div.querySelector('.del').addEventListener('click', ()=>{
+      const wrap = document.createElement('div');
+      wrap.className = "thumb-wrap";
+      wrap.innerHTML = `
+        <div class="thumb"><img src="${p.dataUrl}"><button class="del" data-id="${p.id}">×</button></div>
+        <input type="text" class="comment-input" maxlength="60" placeholder="コメント(任意)" value="${(p.comment||'').replace(/"/g,'&quot;')}">
+      `;
+      wrap.querySelector('.del').addEventListener('click', ()=>{
         state.overview = state.overview.filter(x=>x.id!==p.id);
         renderOverview();
       });
-      list.appendChild(div);
+      wrap.querySelector('.comment-input').addEventListener('input', (e)=>{
+        p.comment = e.target.value;
+      });
+      list.appendChild(wrap);
     });
   }
 
@@ -320,14 +327,20 @@
 
       const photoGrid = block.querySelector(`[data-photos="${d.id}"]`);
       d.photos.forEach(p=>{
-        const div = document.createElement('div');
-        div.className = "thumb";
-        div.innerHTML = `<img src="${p.dataUrl}"><button class="del" data-pid="${p.id}">×</button>`;
-        div.querySelector('.del').addEventListener('click', ()=>{
+        const wrap = document.createElement('div');
+        wrap.className = "thumb-wrap";
+        wrap.innerHTML = `
+          <div class="thumb"><img src="${p.dataUrl}"><button class="del" data-pid="${p.id}">×</button></div>
+          <input type="text" class="comment-input" maxlength="60" placeholder="コメント(例:傷の位置)" value="${(p.comment||'').replace(/"/g,'&quot;')}">
+        `;
+        wrap.querySelector('.del').addEventListener('click', ()=>{
           d.photos = d.photos.filter(x=>x.id!==p.id);
           renderDamages();
         });
-        photoGrid.appendChild(div);
+        wrap.querySelector('.comment-input').addEventListener('input', (e)=>{
+          p.comment = e.target.value;
+        });
+        photoGrid.appendChild(wrap);
       });
 
       block.querySelector('[data-remove-damage]').addEventListener('click', ()=>{
@@ -344,7 +357,7 @@
         setStatus("写真を処理中…");
         try{
           const resized = await resizeImageFile(file, 1400, 0.82);
-          d.photos.push({ id:newId(), ...resized });
+          d.photos.push({ id:newId(), ...resized, comment:'' });
           renderDamages();
           setStatus("");
         }catch(err){
@@ -353,17 +366,6 @@
       });
     });
   }
-
-  // ---------- events: settings ----------
-  document.getElementById('gasUrl').value = state.gasUrl;
-  document.getElementById('saveGasUrlBtn').addEventListener('click', ()=>{
-    const val = document.getElementById('gasUrl').value.trim();
-    state.gasUrl = val;
-    localStorage.setItem(GAS_URL_KEY, val);
-    const s = document.getElementById('gasUrlStatus');
-    s.textContent = val ? "保存しました。" : "URLが空です。";
-    s.style.color = val ? "#158a42" : "#dc2626";
-  });
 
   // ---------- events: label / VIN ----------
   document.getElementById('scanLabelBtn').addEventListener('click', ()=>{
@@ -414,7 +416,7 @@
     setStatus("写真を処理中…");
     try{
       const resized = await resizeImageFile(file, 1600, 0.82);
-      state.overview.push({ id:newId(), ...resized });
+      state.overview.push({ id:newId(), ...resized, comment:'' });
       renderOverview();
       setStatus("");
     }catch(err){
@@ -435,6 +437,17 @@
     const scale = Math.min(boxW/imgW, boxH/imgH);
     const w = imgW*scale, h = imgH*scale;
     return { w, h };
+  }
+
+  // 指定幅に収まるようテキストを省略記号付きで切り詰める
+  function truncateText(doc, text, maxWidth){
+    if (!text) return '';
+    if (doc.getTextWidth(text) <= maxWidth) return text;
+    let t = text;
+    while (t.length > 0 && doc.getTextWidth(t + '…') > maxWidth){
+      t = t.slice(0, -1);
+    }
+    return t + '…';
   }
 
   async function generatePDF(){
@@ -494,14 +507,21 @@
         }
       }
 
+      const commentReserve = 5;
       state.overview.forEach(p=>{
         ensureCoverSpace();
-        const fit = fitRect(p.w, p.h, cellW-2, cellH-2);
+        const imgAreaH = cellH - 2 - commentReserve;
+        const fit = fitRect(p.w, p.h, cellW-2, imgAreaH);
         const ox = gx + (cellW-fit.w)/2;
-        const oy = gy + (cellH-fit.h)/2;
+        const oy = gy + 1 + (imgAreaH-fit.h)/2;
         doc.setDrawColor(220);
         doc.rect(gx, gy, cellW, cellH);
         doc.addImage(p.dataUrl, 'JPEG', ox, oy, fit.w, fit.h);
+        if (p.comment){
+          doc.setFontSize(8);
+          doc.setFont(undefined,'normal');
+          doc.text(truncateText(doc, p.comment, cellW-4), gx+2, gy+cellH-1.5);
+        }
         col++;
         if (col >= cols){ col = 0; gx = gridStartX; gy += cellH + gap; }
         else { gx += cellW + gap; }
@@ -534,19 +554,26 @@
         }
       }
 
+      const dCommentReserve = 5;
       state.damages.forEach((d, dIdx)=>{
         if (d.photos.length === 0) return;
         d.photos.forEach((p, pIdx)=>{
           ensureDamageSpace();
-          const fit = fitRect(p.w, p.h, dCellW-2, dCellH-8);
+          const imgAreaH = dCellH - 8 - dCommentReserve;
+          const fit = fitRect(p.w, p.h, dCellW-2, imgAreaH);
           const ox = px + (dCellW-fit.w)/2;
-          const oy = py + 5 + (dCellH-8-fit.h)/2;
+          const oy = py + 5 + (imgAreaH-fit.h)/2;
           doc.setDrawColor(220);
           doc.rect(px, py, dCellW, dCellH);
           doc.setFontSize(8);
           doc.setFont(undefined,'bold');
           doc.text(`傷${dIdx+1} - ${pIdx+1}`, px+2, py+4.5);
           doc.addImage(p.dataUrl, 'JPEG', ox, oy, fit.w, fit.h);
+          if (p.comment){
+            doc.setFontSize(8);
+            doc.setFont(undefined,'normal');
+            doc.text(truncateText(doc, p.comment, dCellW-4), px+2, py+dCellH-1.5);
+          }
           pcol++;
           if (pcol >= dCols){ pcol = 0; px = margin; py += dCellH + dGap; }
           else { px += dCellW + dGap; }
