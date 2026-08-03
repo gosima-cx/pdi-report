@@ -194,13 +194,14 @@
   "use strict";
 
   const GAS_URL_KEY = 'pdi_gas_url';
+  const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbygzu_Mld3VVfyLdz0efLF75nMaJga5TjQwq_m_tMEJeKchwX_jsGVgGXD1pIXIbR78vw/exec';
 
   const state = {
     vin6: "",
     labelPhoto: null,      // {dataUrl,w,h}
     overview: [],          // [{id,dataUrl,w,h}]
     damages: [],           // [{id,name,photos:[{id,dataUrl,w,h}]}]
-    gasUrl: localStorage.getItem(GAS_URL_KEY) || "",
+    gasUrl: localStorage.getItem(GAS_URL_KEY) || DEFAULT_GAS_URL,
     lastPdfBase64: null,
     lastFileName: null,
     lastDoc: null
