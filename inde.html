@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>PDI ダメージレポート作成</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsqr/1.4.0/jsQR.js"></script>
+<style>
+  :root{
+    --accent:#111827;
+    --accent2:#2563eb;
+    --danger:#dc2626;
+    --bg:#f4f5f7;
+    --card:#ffffff;
+    --border:#e2e4e9;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic",sans-serif;
+    background:var(--bg);
+    color:#1f2330;
+    padding-bottom:100px;
+  }
+  header{
+    background:var(--accent);
+    color:#fff;
+    padding:16px 18px;
+    position:sticky;
+    top:0;
+    z-index:10;
+  }
+  header h1{margin:0;font-size:17px;font-weight:600;}
+  header p{margin:4px 0 0;font-size:12px;color:#c7cad3;}
+  main{padding:14px;max-width:640px;margin:0 auto;}
+  section.card{
+    background:var(--card);
+    border:1px solid var(--border);
+    border-radius:12px;
+    padding:14px;
+    margin-bottom:14px;
+  }
+  section.card h2{
+    font-size:14px;
+    margin:0 0 10px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+  }
+  .hint{font-size:12px;color:#6b7280;margin:0 0 10px;}
+  button{
+    font-family:inherit;
+    cursor:pointer;
+    border:none;
+    border-radius:9px;
+    font-size:14px;
+    font-weight:600;
+    padding:11px 14px;
+  }
+  .btn-primary{background:var(--accent2);color:#fff;width:100%;}
+  .btn-secondary{background:#eef1f6;color:var(--accent);width:100%;}
+  .btn-outline{background:#fff;color:var(--accent2);border:1px solid var(--accent2);}
+  .btn-danger-outline{background:#fff;color:var(--danger);border:1px solid var(--danger);font-size:12px;padding:6px 10px;}
+  input[type=text]{
+    width:100%;
+    font-size:20px;
+    letter-spacing:2px;
+    padding:10px 12px;
+    border:1px solid var(--border);
+    border-radius:8px;
+    font-weight:700;
+  }
+  .row{display:flex;gap:8px;align-items:center;}
+  .thumb-grid{
+    display:grid;
+    grid-template-columns:repeat(3,1fr);
+    gap:8px;
+    margin-bottom:10px;
+  }
+  .thumb-grid.cols2{grid-template-columns:repeat(2,1fr);}
+  .thumb{
+    position:relative;
+    border-radius:8px;
+    overflow:hidden;
+    border:1px solid var(--border);
+    aspect-ratio:1/1;
+    background:#f0f1f4;
+  }
+  .thumb img{width:100%;height:100%;object-fit:cover;display:block;}
+  .thumb .del{
+    position:absolute;top:3px;right:3px;
+    background:rgba(0,0,0,.6);color:#fff;
+    width:22px;height:22px;border-radius:50%;
+    font-size:13px;line-height:1;padding:0;
+    display:flex;align-items:center;justify-content:center;
+  }
+  .damage-block{
+    border:1px dashed var(--border);
+    border-radius:10px;
+    padding:10px;
+    margin-bottom:12px;
+    background:#fafbfc;
+  }
+  .damage-block .dhead{
+    display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;
+  }
+  .damage-block .dhead .dname{font-weight:700;font-size:13px;}
+  .empty{font-size:12px;color:#9aa0ab;padding:6px 0;}
+  #status{
+    max-width:640px;margin:0 auto;padding:0 14px;
+    font-size:13px;color:#374151;min-height:18px;
+  }
+  .footer-bar{
+    position:fixed;bottom:0;left:0;right:0;
+    background:#fff;border-top:1px solid var(--border);
+    padding:10px 14px calc(10px + env(safe-area-inset-bottom));
+  }
+  .footer-bar .inner{max-width:640px;margin:0 auto;}
+  .badge{
+    display:inline-block;font-size:11px;padding:2px 7px;border-radius:20px;
+    background:#e8f0fe;color:var(--accent2);font-weight:600;
+  }
+  .badge.ok{background:#e6f7ec;color:#158a42;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>PDI ダメージレポート作成</h1>
+  <p>撮影 → PDF自動作成 → Google Driveへアップロード（スプレッドシートにリンクを記録）</p>
+</header>
+
+<main>
+
+  <section class="card" id="settings-section">
+    <h2>⚙ 設定（初回のみ）</h2>
+    <p class="hint">Google Apps Scriptで発行したウェブアプリURLを設定してください。この端末に保存され、次回以降は入力不要です。</p>
+    <div class="row">
+      <input type="text" id="gasUrl" placeholder="https://script.google.com/macros/s/.../exec" style="font-size:13px;letter-spacing:0;font-weight:400;">
+      <button class="btn-outline" id="saveGasUrlBtn" style="white-space:nowrap;">保存</button>
+    </div>
+    <p class="hint" id="gasUrlStatus" style="margin:6px 0 0;"></p>
+  </section>
+
+  <section class="card" id="vin-section">
+    <h2>① 車台番号ラベル</h2>
+    <p class="hint">ラベルを撮影するとQRコードからVIN下6桁を自動読み取りします（読み取れない場合は手入力してください）。</p>
+    <button class="btn-outline" id="scanLabelBtn" style="width:100%;margin-bottom:10px;">📷 ラベルを撮影してVIN読み取り</button>
+    <input type="file" id="labelInput" accept="image/*" capture="environment" hidden>
+    <div id="labelPreviewWrap" style="display:none;margin-bottom:10px;">
+      <div class="thumb" style="aspect-ratio:16/9;max-width:220px;">
+        <img id="labelPreviewImg">
+      </div>
+    </div>
+    <label style="font-size:12px;color:#6b7280;display:block;margin-bottom:4px;">車台番号 下6桁</label>
+    <div class="row">
+      <input type="text" id="vin6" maxlength="6" placeholder="例：819902" inputmode="latin">
+      <span class="badge" id="vinBadge">未読取</span>
+    </div>
+  </section>
+
+  <section class="card" id="overview-section">
+    <h2>② 車両全景写真</h2>
+    <p class="hint">傷の位置がわかる全景を必要な枚数だけ撮影してください。</p>
+    <div class="thumb-grid cols2" id="overviewList"></div>
+    <div class="empty" id="overviewEmpty">まだ写真がありません</div>
+    <button class="btn-secondary" id="addOverviewBtn">＋ 全景写真を追加</button>
+    <input type="file" id="overviewInput" accept="image/*" capture="environment" hidden>
+  </section>
+
+  <section class="card" id="damage-section">
+    <h2>③ 傷の記録</h2>
+    <p class="hint">傷ごとに「傷を追加」→クローズアップ写真を必要な枚数だけ追加してください。</p>
+    <div id="damageList"></div>
+    <div class="empty" id="damageEmpty">まだ傷が登録されていません</div>
+    <button class="btn-secondary" id="addDamageBtn">＋ 傷を追加</button>
+  </section>
+
+</main>
+
+<div id="status"></div>
+
+<div class="footer-bar">
+  <div class="inner">
+    <button class="btn-primary" id="generateBtn">PDFを作成してGoogle Driveへアップロード</button>
+    <button class="btn-secondary" id="retryBtn" style="display:none;margin-top:8px;">アップロードを再試行</button>
+    <button class="btn-secondary" id="localSaveBtn" style="display:none;margin-top:8px;">端末にもPDFを保存する（予備）</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  const GAS_URL_KEY = 'pdi_gas_url';
+
+  const state = {
+    vin6: "",
+    labelPhoto: null,      // {dataUrl,w,h}
+    overview: [],          // [{id,dataUrl,w,h}]
+    damages: [],           // [{id,name,photos:[{id,dataUrl,w,h}]}]
+    gasUrl: localStorage.getItem(GAS_URL_KEY) || "",
+    lastPdfBase64: null,
+    lastFileName: null,
+    lastDoc: null
+  };
+  let uid = 1;
+  const newId = () => uid++;
+
+  // ---------- helpers ----------
+  function setStatus(msg, isError){
+    const el = document.getElementById('status');
+    el.textContent = msg || "";
+    el.style.color = isError ? "#dc2626" : "#374151";
+  }
+
+  function readFileAsDataURL(file){
+    return new Promise((resolve,reject)=>{
+      const r = new FileReader();
+      r.onload = ()=>resolve(r.result);
+      r.onerror = reject;
+      r.readAsDataURL(file);
+    });
+  }
+
+  function loadImage(src){
+    return new Promise((resolve,reject)=>{
+      const img = new Image();
+      img.onload = ()=>resolve(img);
+      img.onerror = reject;
+      img.src = src;
+    });
+  }
+
+  // resize to maxDim, return {dataUrl,w,h}
+  async function resizeImageFile(file, maxDim, quality){
+    maxDim = maxDim || 1400;
+    quality = quality || 0.82;
+    const rawUrl = await readFileAsDataURL(file);
+    const img = await loadImage(rawUrl);
+    let w = img.naturalWidth, h = img.naturalHeight;
+    if (w > maxDim || h > maxDim){
+      if (w >= h){ h = Math.round(h * (maxDim / w)); w = maxDim; }
+      else { w = Math.round(w * (maxDim / h)); h = maxDim; }
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, w, h);
+    const dataUrl = canvas.toDataURL('image/jpeg', quality);
+    return { dataUrl, w, h };
+  }
+
+  async function decodeQR(dataUrl){
+    const img = await loadImage(dataUrl);
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img,0,0);
+    const imageData = ctx.getImageData(0,0,canvas.width,canvas.height);
+    const result = jsQR(imageData.data, canvas.width, canvas.height);
+    return result ? result.data : null;
+  }
+
+  function extractVin6(text){
+    if (!text) return null;
+    // typical VIN: 17 chars, excludes I,O,Q
+    const m = text.toUpperCase().match(/[A-HJ-NPR-Z0-9]{17}/);
+    if (m) return m[0].slice(-6);
+    const cleaned = text.toUpperCase().replace(/[^A-Z0-9]/g,'');
+    if (cleaned.length >= 6) return cleaned.slice(-6);
+    return null;
+  }
+
+  // ---------- render ----------
+  function renderVinBadge(fromScan){
+    const badge = document.getElementById('vinBadge');
+    if (fromScan){ badge.textContent = "QRから取得"; badge.className = "badge ok"; }
+    else { badge.textContent = "手入力"; badge.className = "badge"; }
+  }
+
+  function renderOverview(){
+    const list = document.getElementById('overviewList');
+    const empty = document.getElementById('overviewEmpty');
+    list.innerHTML = "";
+    empty.style.display = state.overview.length ? "none" : "block";
+    state.overview.forEach(p=>{
+      const div = document.createElement('div');
+      div.className = "thumb";
+      div.innerHTML = `<img src="${p.dataUrl}"><button class="del" data-id="${p.id}">×</button>`;
+      div.querySelector('.del').addEventListener('click', ()=>{
+        state.overview = state.overview.filter(x=>x.id!==p.id);
+        renderOverview();
+      });
+      list.appendChild(div);
+    });
+  }
+
+  function renderDamages(){
+    const list = document.getElementById('damageList');
+    const empty = document.getElementById('damageEmpty');
+    list.innerHTML = "";
+    empty.style.display = state.damages.length ? "none" : "block";
+    state.damages.forEach((d, idx)=>{
+      const block = document.createElement('div');
+      block.className = "damage-block";
+      block.innerHTML = `
+        <div class="dhead">
+          <span class="dname">傷 ${idx+1}</span>
+          <button class="btn-danger-outline" data-remove-damage="${d.id}">この傷を削除</button>
+        </div>
+        <div class="thumb-grid" data-photos="${d.id}"></div>
+        <button class="btn-outline" data-add-photo="${d.id}" style="width:100%;">📷 写真を追加</button>
+        <input type="file" accept="image/*" capture="environment" hidden data-input-for="${d.id}">
+      `;
+      list.appendChild(block);
+
+      const photoGrid = block.querySelector(`[data-photos="${d.id}"]`);
+      d.photos.forEach(p=>{
+        const div = document.createElement('div');
+        div.className = "thumb";
+        div.innerHTML = `<img src="${p.dataUrl}"><button class="del" data-pid="${p.id}">×</button>`;
+        div.querySelector('.del').addEventListener('click', ()=>{
+          d.photos = d.photos.filter(x=>x.id!==p.id);
+          renderDamages();
+        });
+        photoGrid.appendChild(div);
+      });
+
+      block.querySelector('[data-remove-damage]').addEventListener('click', ()=>{
+        state.damages = state.damages.filter(x=>x.id!==d.id);
+        renderDamages();
+      });
+
+      const fileInput = block.querySelector(`[data-input-for="${d.id}"]`);
+      block.querySelector('[data-add-photo]').addEventListener('click', ()=> fileInput.click());
+      fileInput.addEventListener('change', async (e)=>{
+        const file = e.target.files[0];
+        e.target.value = "";
+        if (!file) return;
+        setStatus("写真を処理中…");
+        try{
+          const resized = await resizeImageFile(file, 1400, 0.82);
+          d.photos.push({ id:newId(), ...resized });
+          renderDamages();
+          setStatus("");
+        }catch(err){
+          setStatus("写真の処理に失敗しました: " + err.message, true);
+        }
+      });
+    });
+  }
+
+  // ---------- events: settings ----------
+  document.getElementById('gasUrl').value = state.gasUrl;
+  document.getElementById('saveGasUrlBtn').addEventListener('click', ()=>{
+    const val = document.getElementById('gasUrl').value.trim();
+    state.gasUrl = val;
+    localStorage.setItem(GAS_URL_KEY, val);
+    const s = document.getElementById('gasUrlStatus');
+    s.textContent = val ? "保存しました。" : "URLが空です。";
+    s.style.color = val ? "#158a42" : "#dc2626";
+  });
+
+  // ---------- events: label / VIN ----------
+  document.getElementById('scanLabelBtn').addEventListener('click', ()=>{
+    document.getElementById('labelInput').click();
+  });
+
+  document.getElementById('labelInput').addEventListener('change', async (e)=>{
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    setStatus("ラベル写真を処理中…");
+    try{
+      const resized = await resizeImageFile(file, 1600, 0.85);
+      state.labelPhoto = resized;
+      document.getElementById('labelPreviewImg').src = resized.dataUrl;
+      document.getElementById('labelPreviewWrap').style.display = "block";
+
+      const qrText = await decodeQR(resized.dataUrl);
+      const vin6 = extractVin6(qrText);
+      if (vin6){
+        state.vin6 = vin6;
+        document.getElementById('vin6').value = vin6;
+        renderVinBadge(true);
+        setStatus("QRコードからVIN下6桁を読み取りました。");
+      } else {
+        renderVinBadge(false);
+        setStatus("QRコードを読み取れませんでした。下6桁を手入力してください。", true);
+      }
+    }catch(err){
+      setStatus("ラベル写真の処理に失敗しました: " + err.message, true);
+    }
+  });
+
+  document.getElementById('vin6').addEventListener('input', (e)=>{
+    state.vin6 = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6);
+    e.target.value = state.vin6;
+    renderVinBadge(false);
+  });
+
+  // ---------- events: overview ----------
+  document.getElementById('addOverviewBtn').addEventListener('click', ()=>{
+    document.getElementById('overviewInput').click();
+  });
+  document.getElementById('overviewInput').addEventListener('change', async (e)=>{
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    setStatus("写真を処理中…");
+    try{
+      const resized = await resizeImageFile(file, 1600, 0.82);
+      state.overview.push({ id:newId(), ...resized });
+      renderOverview();
+      setStatus("");
+    }catch(err){
+      setStatus("写真の処理に失敗しました: " + err.message, true);
+    }
+  });
+
+  // ---------- events: damages ----------
+  document.getElementById('addDamageBtn').addEventListener('click', ()=>{
+    state.damages.push({ id:newId(), photos:[] });
+    renderDamages();
+  });
+
+  // ---------- PDF generation ----------
+  document.getElementById('generateBtn').addEventListener('click', generatePDF);
+
+  function fitRect(imgW, imgH, boxW, boxH){
+    const scale = Math.min(boxW/imgW, boxH/imgH);
+    const w = imgW*scale, h = imgH*scale;
+    return { w, h };
+  }
+
+  async function generatePDF(){
+    if (!state.vin6 || state.vin6.length < 4){
+      setStatus("車台番号の下6桁を入力（またはQR読み取り）してください。", true);
+      return;
+    }
+    const totalPhotos = state.overview.length + state.damages.reduce((s,d)=>s+d.photos.length,0);
+    if (!state.labelPhoto && totalPhotos === 0){
+      setStatus("写真が1枚もありません。", true);
+      return;
+    }
+
+    setStatus("PDFを作成しています…");
+    try{
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ orientation:'landscape', unit:'mm', format:'a4' });
+      const pageW = 297, pageH = 210;
+      const margin = 10;
+
+      // ---- Cover page: label + info + overview ----
+      doc.setFontSize(14);
+      doc.setFont(undefined,'bold');
+      doc.text(`PDI ダメージチェックレポート`, margin, margin+4);
+      doc.setFontSize(10);
+      doc.setFont(undefined,'normal');
+      const today = new Date();
+      const dateStr = `${today.getFullYear()}/${String(today.getMonth()+1).padStart(2,'0')}/${String(today.getDate()).padStart(2,'0')}`;
+      doc.text(`車台番号(下6桁): ${state.vin6}　　検査日: ${dateStr}`, margin, margin+11);
+
+      let cursorY = margin + 16;
+
+      if (state.labelPhoto){
+        const boxW = 55, boxH = 40;
+        const fit = fitRect(state.labelPhoto.w, state.labelPhoto.h, boxW, boxH);
+        doc.addImage(state.labelPhoto.dataUrl, 'JPEG', margin, cursorY, fit.w, fit.h);
+        doc.setFontSize(8);
+        doc.text('車台番号ラベル', margin, cursorY + boxH + 4);
+      }
+
+      // overview grid to the right of label / below
+      const gap = 6;
+      const cols = 2;
+      const gridStartX = state.labelPhoto ? margin + 55 + 8 : margin;
+      const gridW = pageW - gridStartX - margin;
+      const cellW = (gridW - gap*(cols-1)) / cols;
+      const cellH = 55;
+      let gx = gridStartX, gy = cursorY;
+      let col = 0;
+
+      function ensureCoverSpace(){
+        if (gy + cellH > pageH - margin){
+          doc.addPage();
+          gy = margin;
+          gx = margin;
+          col = 0;
+        }
+      }
+
+      state.overview.forEach(p=>{
+        ensureCoverSpace();
+        const fit = fitRect(p.w, p.h, cellW-2, cellH-2);
+        const ox = gx + (cellW-fit.w)/2;
+        const oy = gy + (cellH-fit.h)/2;
+        doc.setDrawColor(220);
+        doc.rect(gx, gy, cellW, cellH);
+        doc.addImage(p.dataUrl, 'JPEG', ox, oy, fit.w, fit.h);
+        col++;
+        if (col >= cols){ col = 0; gx = gridStartX; gy += cellH + gap; }
+        else { gx += cellW + gap; }
+      });
+
+      // ---- Damage pages: 3 columns grid, labeled by damage number ----
+      const dCols = 3, dGap = 6;
+      const dCellW = (pageW - margin*2 - dGap*(dCols-1)) / dCols;
+      const dCellH = 58;
+      let px = margin, py = margin, pcol = 0;
+      let startedDamagePage = false;
+
+      function newDamagePage(){
+        doc.addPage();
+        px = margin; py = margin; pcol = 0;
+        doc.setFontSize(12);
+        doc.setFont(undefined,'bold');
+        doc.text(`傷の詳細 - 車台番号(下6桁): ${state.vin6}`, margin, margin - 2 > 0 ? margin - 2 : margin);
+        py = margin + 6;
+      }
+
+      function ensureDamageSpace(){
+        if (!startedDamagePage){
+          newDamagePage();
+          startedDamagePage = true;
+          return;
+        }
+        if (py + dCellH > pageH - margin){
+          newDamagePage();
+        }
+      }
+
+      state.damages.forEach((d, dIdx)=>{
+        if (d.photos.length === 0) return;
+        d.photos.forEach((p, pIdx)=>{
+          ensureDamageSpace();
+          const fit = fitRect(p.w, p.h, dCellW-2, dCellH-8);
+          const ox = px + (dCellW-fit.w)/2;
+          const oy = py + 5 + (dCellH-8-fit.h)/2;
+          doc.setDrawColor(220);
+          doc.rect(px, py, dCellW, dCellH);
+          doc.setFontSize(8);
+          doc.setFont(undefined,'bold');
+          doc.text(`傷${dIdx+1} - ${pIdx+1}`, px+2, py+4.5);
+          doc.addImage(p.dataUrl, 'JPEG', ox, oy, fit.w, fit.h);
+          pcol++;
+          if (pcol >= dCols){ pcol = 0; px = margin; py += dCellH + dGap; }
+          else { px += dCellW + dGap; }
+        });
+      });
+
+      const fileName = `${state.vin6}.pdf`;
+      const pdfDataUri = doc.output('datauristring');
+      const base64 = pdfDataUri.substring(pdfDataUri.indexOf(',') + 1);
+
+      state.lastDoc = doc;
+      state.lastFileName = fileName;
+      state.lastPdfBase64 = base64;
+      document.getElementById('localSaveBtn').style.display = 'block';
+
+      await uploadPdf(base64, fileName);
+    }catch(err){
+      setStatus("PDF作成に失敗しました: " + err.message, true);
+    }
+  }
+
+  async function uploadPdf(base64, fileName){
+    const retryBtn = document.getElementById('retryBtn');
+    if (!state.gasUrl){
+      setStatus("GAS WebアプリURLが未設定です。上部の「設定」でURLを保存するか、下の「端末にも保存する」を使ってください。", true);
+      retryBtn.style.display = 'none';
+      return;
+    }
+    setStatus("Google Driveへアップロード中…");
+    retryBtn.style.display = 'none';
+    try{
+      const res = await fetch(state.gasUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ vin6: state.vin6, fileName, pdfBase64: base64 })
+      });
+      const json = await res.json();
+      if (json.ok){
+        setStatus("アップロード完了。スプレッドシートにDriveリンクを記録しました。");
+      } else {
+        throw new Error(json.error || 'サーバー側でエラーが発生しました');
+      }
+    }catch(err){
+      setStatus("アップロードに失敗しました（" + err.message + "）。電波状況を確認して再試行するか、端末に保存してください。", true);
+      retryBtn.style.display = 'block';
+    }
+  }
+
+  document.getElementById('retryBtn').addEventListener('click', ()=>{
+    if (state.lastPdfBase64) uploadPdf(state.lastPdfBase64, state.lastFileName);
+  });
+
+  document.getElementById('localSaveBtn').addEventListener('click', ()=>{
+    if (state.lastDoc) state.lastDoc.save(state.lastFileName);
+  });
+
+  renderOverview();
+  renderDamages();
+})();
+</script>
+</body>
+</html>
