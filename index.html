@@ -21,7 +21,7 @@
     font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic",sans-serif;
     background:var(--bg);
     color:#1f2330;
-    padding-bottom:100px;
+    padding-bottom:220px;
   }
   header{
     background:var(--accent);
@@ -118,13 +118,15 @@
   .damage-block .dhead .dname{font-weight:700;font-size:13px;}
   .empty{font-size:12px;color:#9aa0ab;padding:6px 0;}
   #status{
-    max-width:640px;margin:0 auto;padding:0 14px;
     font-size:13px;color:#374151;min-height:18px;
+    margin-bottom:8px;
   }
   .footer-bar{
     position:fixed;bottom:0;left:0;right:0;
     background:#fff;border-top:1px solid var(--border);
     padding:10px 14px calc(10px + env(safe-area-inset-bottom));
+    max-height:60vh;
+    overflow-y:auto;
   }
   .footer-bar .inner{max-width:640px;margin:0 auto;}
   .badge{
@@ -179,10 +181,9 @@
 
 </main>
 
-<div id="status"></div>
-
 <div class="footer-bar">
   <div class="inner">
+    <div id="status"></div>
     <button class="btn-primary" id="generateBtn">PDFを作成してGoogle Driveへアップロード</button>
     <button class="btn-secondary" id="retryBtn" style="display:none;margin-top:8px;">アップロードを再試行</button>
     <button class="btn-secondary" id="localSaveBtn" style="display:none;margin-top:8px;">端末にもPDFを保存する（予備）</button>
@@ -610,7 +611,14 @@
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({ vin6: state.vin6, fileName, pdfBase64: base64 })
       });
-      const json = await res.json();
+      const rawText = await res.text();
+      let json;
+      try{
+        json = JSON.parse(rawText);
+      }catch(parseErr){
+        // JSONで返ってこない = ログイン画面やアクセス拒否ページが返ってきている可能性が高い
+        throw new Error('サーバーから想定外の応答（HTTP ' + res.status + '）。GASのデプロイ設定「アクセスできるユーザー:全員」になっているか確認してください。');
+      }
       if (json.ok){
         setStatus("アップロード完了。スプレッドシートにDriveリンクを記録しました。");
       } else {
