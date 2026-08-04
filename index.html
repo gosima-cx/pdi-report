@@ -440,12 +440,52 @@
     return { w, h };
   }
 
-  // 指定幅に収まるようテキストを省略記号付きで切り詰める
-  function truncateText(doc, text, maxWidth){
+  // jsPDF標準フォントは日本語非対応(文字化けする)ため、
+  // 日本語テキストはCanvasで画像化してPDFに貼り付ける
+  const PPM = 12; // canvasのpx数とmm換算の基準(約300dpi相当)
+
+  function jpTextImage(text, fontSizeMm, opts){
+    opts = opts || {};
+    const weight = opts.bold ? 'bold' : 'normal';
+    const color = opts.color || '#111827';
+    const fontPx = Math.max(1, Math.round(fontSizeMm * PPM));
+    const measureCtx = document.createElement('canvas').getContext('2d');
+    measureCtx.font = `${weight} ${fontPx}px sans-serif`;
+    const textWidthPx = Math.max(1, Math.ceil(measureCtx.measureText(text).width));
+    const padX = Math.ceil(fontPx * 0.08);
+    const canvas = document.createElement('canvas');
+    canvas.width = textWidthPx + padX * 2;
+    canvas.height = Math.ceil(fontPx * 1.35);
+    const ctx = canvas.getContext('2d');
+    ctx.font = `${weight} ${fontPx}px sans-serif`;
+    ctx.fillStyle = color;
+    ctx.textBaseline = 'top';
+    ctx.fillText(text, padX, Math.round(fontPx * 0.12));
+    return {
+      dataUrl: canvas.toDataURL('image/png'),
+      widthMm: canvas.width / PPM,
+      heightMm: canvas.height / PPM
+    };
+  }
+
+  // 日本語テキストをxMm,yTopMm(左上基準)にPNG画像として描画する
+  function jpText(doc, text, xMm, yTopMm, fontSizeMm, opts){
+    if (!text) return { widthMm: 0, heightMm: 0 };
+    const img = jpTextImage(text, fontSizeMm, opts);
+    doc.addImage(img.dataUrl, 'PNG', xMm, yTopMm, img.widthMm, img.heightMm);
+    return img;
+  }
+
+  // 指定幅に収まるようテキストを省略記号付きで切り詰める(Canvas測定ベース)
+  function jpTruncate(text, fontSizeMm, maxWidthMm, bold){
     if (!text) return '';
-    if (doc.getTextWidth(text) <= maxWidth) return text;
+    const fontPx = Math.max(1, Math.round(fontSizeMm * PPM));
+    const ctx = document.createElement('canvas').getContext('2d');
+    ctx.font = `${bold ? 'bold ' : ''}${fontPx}px sans-serif`;
+    const maxPx = maxWidthMm * PPM;
+    if (ctx.measureText(text).width <= maxPx) return text;
     let t = text;
-    while (t.length > 0 && doc.getTextWidth(t + '…') > maxWidth){
+    while (t.length > 0 && ctx.measureText(t + '…').width > maxPx){
       t = t.slice(0, -1);
     }
     return t + '…';
@@ -470,14 +510,10 @@
       const margin = 10;
 
       // ---- Cover page: label + info + overview ----
-      doc.setFontSize(14);
-      doc.setFont(undefined,'bold');
-      doc.text(`PDI ダメージチェックレポート`, margin, margin+4);
-      doc.setFontSize(10);
-      doc.setFont(undefined,'normal');
+      jpText(doc, 'PDI ダメージチェックレポート', margin, margin, 5, {bold:true});
       const today = new Date();
       const dateStr = `${today.getFullYear()}/${String(today.getMonth()+1).padStart(2,'0')}/${String(today.getDate()).padStart(2,'0')}`;
-      doc.text(`車台番号(下6桁): ${state.vin6}　　検査日: ${dateStr}`, margin, margin+11);
+      jpText(doc, `車台番号(下6桁): ${state.vin6}　　検査日: ${dateStr}`, margin, margin+8, 3.5);
 
       let cursorY = margin + 16;
 
@@ -485,8 +521,7 @@
         const boxW = 55, boxH = 40;
         const fit = fitRect(state.labelPhoto.w, state.labelPhoto.h, boxW, boxH);
         doc.addImage(state.labelPhoto.dataUrl, 'JPEG', margin, cursorY, fit.w, fit.h);
-        doc.setFontSize(8);
-        doc.text('車台番号ラベル', margin, cursorY + boxH + 4);
+        jpText(doc, '車台番号ラベル', margin, cursorY + boxH + 1.5, 2.8);
       }
 
       // overview grid to the right of label / below
@@ -519,9 +554,7 @@
         doc.rect(gx, gy, cellW, cellH);
         doc.addImage(p.dataUrl, 'JPEG', ox, oy, fit.w, fit.h);
         if (p.comment){
-          doc.setFontSize(8);
-          doc.setFont(undefined,'normal');
-          doc.text(truncateText(doc, p.comment, cellW-4), gx+2, gy+cellH-1.5);
+          jpText(doc, jpTruncate(p.comment, 2.6, cellW-4), gx+2, gy+cellH-commentReserve+0.7, 2.6);
         }
         col++;
         if (col >= cols){ col = 0; gx = gridStartX; gy += cellH + gap; }
@@ -538,9 +571,7 @@
       function newDamagePage(){
         doc.addPage();
         px = margin; py = margin; pcol = 0;
-        doc.setFontSize(12);
-        doc.setFont(undefined,'bold');
-        doc.text(`傷の詳細 - 車台番号(下6桁): ${state.vin6}`, margin, margin - 2 > 0 ? margin - 2 : margin);
+        jpText(doc, `傷の詳細 - 車台番号(下6桁): ${state.vin6}`, margin, 4, 4.2, {bold:true});
         py = margin + 6;
       }
 
@@ -566,14 +597,10 @@
           const oy = py + 5 + (imgAreaH-fit.h)/2;
           doc.setDrawColor(220);
           doc.rect(px, py, dCellW, dCellH);
-          doc.setFontSize(8);
-          doc.setFont(undefined,'bold');
-          doc.text(`傷${dIdx+1} - ${pIdx+1}`, px+2, py+4.5);
+          jpText(doc, `傷${dIdx+1} - ${pIdx+1}`, px+2, py+1, 2.8, {bold:true});
           doc.addImage(p.dataUrl, 'JPEG', ox, oy, fit.w, fit.h);
           if (p.comment){
-            doc.setFontSize(8);
-            doc.setFont(undefined,'normal');
-            doc.text(truncateText(doc, p.comment, dCellW-4), px+2, py+dCellH-1.5);
+            jpText(doc, jpTruncate(p.comment, 2.6, dCellW-4), px+2, py+dCellH-dCommentReserve+0.7, 2.6);
           }
           pcol++;
           if (pcol >= dCols){ pcol = 0; px = margin; py += dCellH + dGap; }
