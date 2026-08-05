@@ -60,6 +60,7 @@
   }
   .btn-primary{background:var(--accent2);color:#fff;width:100%;}
   .btn-secondary{background:#eef1f6;color:var(--accent);width:100%;}
+  .btn-success{background:#158a42;color:#fff;width:100%;}
   .btn-outline{background:#fff;color:var(--accent2);border:1px solid var(--accent2);}
   .btn-danger-outline{background:#fff;color:var(--danger);border:1px solid var(--danger);font-size:12px;padding:6px 10px;}
   input[type=text]{
@@ -82,6 +83,7 @@
     color:#1f2330;
   }
   .row{display:flex;gap:8px;align-items:center;}
+  .row input[type=text]{flex:1;min-width:0;width:auto;}
   .thumb-grid{
     display:grid;
     grid-template-columns:repeat(3,1fr);
@@ -127,10 +129,6 @@
   }
   .damage-block .dhead .dname{font-weight:700;font-size:13px;}
   .empty{font-size:12px;color:#9aa0ab;padding:6px 0;}
-  #status{
-    font-size:13px;color:#374151;min-height:18px;
-    margin-bottom:8px;
-  }
   .footer-bar{
     position:fixed;bottom:0;left:0;right:0;
     background:#fff;border-top:1px solid var(--border);
@@ -142,8 +140,21 @@
   .badge{
     display:inline-block;font-size:11px;padding:2px 7px;border-radius:20px;
     background:#e8f0fe;color:var(--accent2);font-weight:600;
+    white-space:nowrap;flex-shrink:0;
   }
   .badge.ok{background:#e6f7ec;color:#158a42;}
+  .status-box{
+    font-size:13px;min-height:18px;margin-bottom:8px;
+  }
+  .status-box.success{
+    background:#e6f7ec;color:#0f6e33;border:1px solid #b7e4c7;
+    border-radius:8px;padding:10px 12px;font-weight:700;font-size:14px;
+    display:flex;align-items:center;gap:6px;
+  }
+  .status-box.error{
+    background:#fdecec;color:#b3261e;border:1px solid #f5c2c0;
+    border-radius:8px;padding:10px 12px;font-weight:600;
+  }
 </style>
 </head>
 <body>
@@ -202,7 +213,8 @@
 
 <div class="footer-bar">
   <div class="inner">
-    <div id="status"></div>
+    <div id="status" class="status-box"></div>
+    <button class="btn-success" id="clearBtn" style="display:none;margin-bottom:8px;">🆕 クリアして次の車両へ</button>
     <button class="btn-primary" id="generateBtn">PDFを作成してGoogle Driveへアップロード</button>
     <button class="btn-secondary" id="retryBtn" style="display:none;margin-top:8px;">アップロードを再試行</button>
     <button class="btn-secondary" id="localSaveBtn" style="display:none;margin-top:8px;">端末にもPDFを保存する（予備）</button>
@@ -234,10 +246,20 @@
   const newId = () => uid++;
 
   // ---------- helpers ----------
-  function setStatus(msg, isError){
+  function setStatus(msg, type){
     const el = document.getElementById('status');
-    el.textContent = msg || "";
-    el.style.color = isError ? "#dc2626" : "#374151";
+    el.className = 'status-box';
+    el.style.color = '';
+    if (!msg){ el.textContent = ''; return; }
+    if (type === true || type === 'error'){
+      el.classList.add('error');
+      el.textContent = msg;
+    } else if (type === 'success'){
+      el.classList.add('success');
+      el.textContent = '✅ ' + msg;
+    } else {
+      el.textContent = msg;
+    }
   }
 
   function readFileAsDataURL(file){
@@ -622,7 +644,7 @@
       const gridStartX = state.labelPhoto ? margin + 55 + 8 : margin;
       const gridW = pageW - gridStartX - margin;
       const cellW = (gridW - gap*(cols-1)) / cols;
-      const cellH = 55;
+      const cellH = 80;
       let gx = gridStartX, gy = cursorY;
       let col = 0;
 
@@ -656,7 +678,7 @@
       // ---- Damage pages: 3 columns grid, labeled by damage number ----
       const dCols = 3, dGap = 6;
       const dCellW = (pageW - margin*2 - dGap*(dCols-1)) / dCols;
-      const dCellH = 58;
+      const dCellH = 88;
       let px = margin, py = margin, pcol = 0;
       let startedDamagePage = false;
 
@@ -724,6 +746,7 @@
     }
     setStatus("Google Driveへアップロード中…");
     retryBtn.style.display = 'none';
+    document.getElementById('clearBtn').style.display = 'none';
     try{
       const res = await fetch(state.gasUrl, {
         method: 'POST',
@@ -739,7 +762,9 @@
         throw new Error('サーバーから想定外の応答（HTTP ' + res.status + '）。GASのデプロイ設定「アクセスできるユーザー:全員」になっているか確認してください。');
       }
       if (json.ok){
-        setStatus("アップロード完了。スプレッドシートにDriveリンクを記録しました。");
+        setStatus(`アップロード完了しました（${state.vin6} / ${state.store}）。スプレッドシートにDriveリンクを記録しました。`, 'success');
+        document.getElementById('clearBtn').style.display = 'block';
+        document.getElementById('retryBtn').style.display = 'none';
       } else {
         throw new Error(json.error || 'サーバー側でエラーが発生しました');
       }
@@ -756,6 +781,41 @@
   document.getElementById('localSaveBtn').addEventListener('click', ()=>{
     if (state.lastDoc) state.lastDoc.save(state.lastFileName);
   });
+
+  function resetForm(){
+    state.vin6 = "";
+    state.store = "";
+    state.labelPhoto = null;
+    state.overview = [];
+    state.damages = [];
+    state.lastDoc = null;
+    state.lastFileName = null;
+    state.lastPdfBase64 = null;
+
+    document.getElementById('vin6').value = "";
+    const vinBadge = document.getElementById('vinBadge');
+    vinBadge.textContent = "未読取";
+    vinBadge.className = "badge";
+
+    document.getElementById('labelPreviewWrap').style.display = "none";
+    document.getElementById('labelPreviewImg').src = "";
+
+    storeSelect.value = "";
+    storeOtherInput.style.display = "none";
+    storeOtherInput.value = "";
+
+    renderOverview();
+    renderDamages();
+
+    document.getElementById('clearBtn').style.display = 'none';
+    document.getElementById('retryBtn').style.display = 'none';
+    document.getElementById('localSaveBtn').style.display = 'none';
+    setStatus("");
+
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  document.getElementById('clearBtn').addEventListener('click', resetForm);
 
   renderOverview();
   renderDamages();
