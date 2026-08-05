@@ -206,7 +206,7 @@
   </section>
 
   <section class="card" id="store-section">
-    <h2>② 送り先店舗</h2>
+    <h2>② 配送先</h2>
     <p class="hint">この車両を送る店舗を選択してください。一覧はスプレッドシートのマスタから取得します。</p>
     <select id="storeSelect">
       <option value="">読み込み中…</option>
@@ -409,56 +409,58 @@
     state.damages.forEach((d, idx)=>{
       const block = document.createElement('div');
       block.className = "damage-block";
+
+      const inList = d.dlocation && state.damageLocations.includes(d.dlocation);
+      const isOther = !!d.dlocation && !inList;
+      let dlocOptions = '<option value="">箇所を選択</option>';
+      state.damageLocations.forEach(name=>{
+        dlocOptions += `<option value="${escapeHtml(name)}"${name===d.dlocation ? ' selected' : ''}>${escapeHtml(name)}</option>`;
+      });
+      dlocOptions += `<option value="${OTHER_VALUE}"${isOther ? ' selected' : ''}>その他（手入力）</option>`;
+
       block.innerHTML = `
         <div class="dhead">
           <span class="dname">傷 ${idx+1}</span>
           <button class="btn-danger-outline" data-remove-damage="${d.id}">この傷を削除</button>
         </div>
-        <div class="thumb-grid" data-photos="${d.id}"></div>
+        <label style="font-size:12px;color:#6b7280;display:block;margin-bottom:4px;">箇所（この傷につき1回選択）</label>
+        <select class="dloc-select">${dlocOptions}</select>
+        <input type="text" class="dloc-other" placeholder="箇所名を入力" style="display:${isOther ? 'block' : 'none'};margin-top:8px;">
+        <div class="thumb-grid" data-photos="${d.id}" style="margin-top:12px;"></div>
         <button class="btn-outline" data-add-photo="${d.id}" style="width:100%;">📷 写真を追加</button>
         <input type="file" accept="image/*" capture="environment" hidden data-input-for="${d.id}">
       `;
       list.appendChild(block);
 
+      const dlocSelect = block.querySelector('.dloc-select');
+      const dlocOther = block.querySelector('.dloc-other');
+      if (isOther) dlocOther.value = d.dlocation;
+      dlocSelect.addEventListener('change', ()=>{
+        if (dlocSelect.value === OTHER_VALUE){
+          dlocOther.style.display = 'block';
+          d.dlocation = dlocOther.value.trim();
+          dlocOther.focus();
+        } else {
+          dlocOther.style.display = 'none';
+          d.dlocation = dlocSelect.value;
+        }
+      });
+      dlocOther.addEventListener('input', ()=>{
+        d.dlocation = dlocOther.value.trim();
+      });
+
       const photoGrid = block.querySelector(`[data-photos="${d.id}"]`);
       d.photos.forEach(p=>{
         const wrap = document.createElement('div');
         wrap.className = "thumb-wrap";
-        const inList = p.dlocation && state.damageLocations.includes(p.dlocation);
-        const isOther = !!p.dlocation && !inList;
-        let dlocOptions = '<option value="">箇所を選択</option>';
-        state.damageLocations.forEach(name=>{
-          dlocOptions += `<option value="${escapeHtml(name)}"${name===p.dlocation ? ' selected' : ''}>${escapeHtml(name)}</option>`;
-        });
-        dlocOptions += `<option value="${OTHER_VALUE}"${isOther ? ' selected' : ''}>その他（手入力）</option>`;
-
         wrap.innerHTML = `
           <div class="thumb"><img src="${p.dataUrl}"><button class="del" data-pid="${p.id}">×</button></div>
-          <select class="dloc-select">${dlocOptions}</select>
-          <input type="text" class="dloc-other" placeholder="箇所名を入力" style="display:${isOther ? 'block' : 'none'};" value="${isOther ? escapeHtml(p.dlocation) : ''}">
           ${commentToggleMarkup(p.comment)}
         `;
         wrap.querySelector('.del').addEventListener('click', ()=>{
           d.photos = d.photos.filter(x=>x.id!==p.id);
           renderDamages();
         });
-
-        const dlocSelect = wrap.querySelector('.dloc-select');
-        const dlocOther = wrap.querySelector('.dloc-other');
-        dlocSelect.addEventListener('change', ()=>{
-          if (dlocSelect.value === OTHER_VALUE){
-            dlocOther.style.display = 'block';
-            p.dlocation = dlocOther.value.trim();
-            dlocOther.focus();
-          } else {
-            dlocOther.style.display = 'none';
-            p.dlocation = dlocSelect.value;
-          }
-        });
-        dlocOther.addEventListener('input', ()=>{
-          p.dlocation = dlocOther.value.trim();
-        });
-
         wireCommentToggle(wrap, p);
         photoGrid.appendChild(wrap);
       });
@@ -477,7 +479,7 @@
         setStatus("写真を処理中…");
         try{
           const resized = await resizeImageFile(file, 1400, 0.82);
-          d.photos.push({ id:newId(), ...resized, dlocation:'', comment:'' });
+          d.photos.push({ id:newId(), ...resized, comment:'' });
           renderDamages();
           setStatus("");
         }catch(err){
@@ -525,7 +527,7 @@
     renderVinBadge(false);
   });
 
-  // ---------- events: 送り先店舗 ----------
+  // ---------- events: 配送先 ----------
   const storeSelect = document.getElementById('storeSelect');
   const storeOtherInput = document.getElementById('storeOtherInput');
 
@@ -637,7 +639,7 @@
 
   // ---------- events: damages ----------
   document.getElementById('addDamageBtn').addEventListener('click', ()=>{
-    state.damages.push({ id:newId(), photos:[] });
+    state.damages.push({ id:newId(), dlocation:'', photos:[] });
     renderDamages();
   });
 
@@ -707,12 +709,17 @@
       return;
     }
     if (!state.store){
-      setStatus("送り先店舗を選択（または手入力）してください。", true);
+      setStatus("配送先を選択（または手入力）してください。", true);
       return;
     }
     const totalPhotos = state.overview.length + state.damages.reduce((s,d)=>s+d.photos.length,0);
     if (!state.labelPhoto && totalPhotos === 0){
       setStatus("写真が1枚もありません。", true);
+      return;
+    }
+    const missingLocationIdx = state.damages.findIndex(d => d.photos.length > 0 && !d.dlocation);
+    if (missingLocationIdx !== -1){
+      setStatus(`「傷${missingLocationIdx+1}」の箇所が未選択です。選択してからPDFを作成してください。`, true);
       return;
     }
 
@@ -728,7 +735,7 @@
       const today = new Date();
       const dateStr = `${today.getFullYear()}/${String(today.getMonth()+1).padStart(2,'0')}/${String(today.getDate()).padStart(2,'0')}`;
       jpText(doc, `車台番号(下6桁): ${state.vin6}　　検査日: ${dateStr}`, margin, margin+8, 3.5);
-      jpText(doc, `送り先店舗: ${state.store}`, margin, margin+13.5, 3.5, {bold:true});
+      jpText(doc, `配送先: ${state.store}`, margin, margin+13.5, 3.5, {bold:true});
 
       let cursorY = margin + 21;
 
@@ -786,7 +793,7 @@
       function newDamagePage(){
         doc.addPage();
         px = margin; py = margin; pcol = 0;
-        jpText(doc, `傷の詳細 - 車台番号(下6桁): ${state.vin6} / 送り先店舗: ${state.store}`, margin, 4, 4.2, {bold:true});
+        jpText(doc, `傷の詳細 - 車台番号(下6桁): ${state.vin6} / 配送先: ${state.store}`, margin, 4, 4.2, {bold:true});
         py = margin + 6;
       }
 
@@ -812,7 +819,7 @@
           const oy = py + 5 + (imgAreaH-fit.h)/2;
           doc.setDrawColor(220);
           doc.rect(px, py, dCellW, dCellH);
-          const dLabel = `傷${dIdx+1}-${pIdx+1}` + (p.dlocation ? `：${p.dlocation}` : '');
+          const dLabel = `傷${dIdx+1}-${pIdx+1}` + (d.dlocation ? `：${d.dlocation}` : '');
           jpText(doc, jpTruncate(dLabel, 2.8, dCellW-4, true), px+2, py+1, 2.8, {bold:true});
           doc.addImage(p.dataUrl, 'JPEG', ox, oy, fit.w, fit.h);
           if (p.comment){
