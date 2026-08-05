@@ -71,6 +71,16 @@
     border-radius:8px;
     font-weight:700;
   }
+  select{
+    width:100%;
+    font-size:16px;
+    padding:10px 12px;
+    border:1px solid var(--border);
+    border-radius:8px;
+    font-weight:600;
+    background:#fff;
+    color:#1f2330;
+  }
   .row{display:flex;gap:8px;align-items:center;}
   .thumb-grid{
     display:grid;
@@ -162,8 +172,17 @@
     </div>
   </section>
 
+  <section class="card" id="store-section">
+    <h2>② 送り先店舗</h2>
+    <p class="hint">この車両を送る店舗を選択してください。一覧はスプレッドシートのマスタから取得します。</p>
+    <select id="storeSelect">
+      <option value="">読み込み中…</option>
+    </select>
+    <input type="text" id="storeOtherInput" placeholder="店舗名を入力" style="display:none;margin-top:8px;font-size:16px;font-weight:600;letter-spacing:0;">
+  </section>
+
   <section class="card" id="overview-section">
-    <h2>② 車両全景写真</h2>
+    <h2>③ 車両全景写真</h2>
     <p class="hint">傷の位置がわかる全景を必要な枚数だけ撮影してください。</p>
     <div class="thumb-grid cols2" id="overviewList"></div>
     <div class="empty" id="overviewEmpty">まだ写真がありません</div>
@@ -172,7 +191,7 @@
   </section>
 
   <section class="card" id="damage-section">
-    <h2>③ 傷の記録</h2>
+    <h2>④ 傷の記録</h2>
     <p class="hint">傷ごとに「傷を追加」→クローズアップ写真を必要な枚数だけ追加してください。</p>
     <div id="damageList"></div>
     <div class="empty" id="damageEmpty">まだ傷が登録されていません</div>
@@ -197,9 +216,12 @@
   const GAS_URL_KEY = 'pdi_gas_url';
   // 初期設定済みのGAS WebアプリURL（設定欄で上書きした場合はそちらが優先されます）
   const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbygzu_Mld3VVfyLdz0efLF75nMaJga5TjQwq_m_tMEJeKchwX_jsGVgGXD1pIXIbR78vw/exec';
+  const STORE_LIST_KEY = 'pdi_store_list';
+  const OTHER_VALUE = '__other__';
 
   const state = {
     vin6: "",
+    store: "",
     labelPhoto: null,      // {dataUrl,w,h}
     overview: [],          // [{id,dataUrl,w,h}]
     damages: [],           // [{id,name,photos:[{id,dataUrl,w,h}]}]
@@ -406,6 +428,71 @@
     renderVinBadge(false);
   });
 
+  // ---------- events: 送り先店舗 ----------
+  const storeSelect = document.getElementById('storeSelect');
+  const storeOtherInput = document.getElementById('storeOtherInput');
+
+  function populateStoreSelect(stores){
+    const prevValue = storeSelect.value;
+    storeSelect.innerHTML = "";
+    const blank = document.createElement('option');
+    blank.value = "";
+    blank.textContent = stores && stores.length ? "選択してください" : "店舗一覧が空です(下で手入力)";
+    storeSelect.appendChild(blank);
+    (stores || []).forEach(name=>{
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      storeSelect.appendChild(opt);
+    });
+    const otherOpt = document.createElement('option');
+    otherOpt.value = OTHER_VALUE;
+    otherOpt.textContent = "その他（手入力）";
+    storeSelect.appendChild(otherOpt);
+
+    if (prevValue && Array.from(storeSelect.options).some(o=>o.value===prevValue)){
+      storeSelect.value = prevValue;
+    }
+  }
+
+  storeSelect.addEventListener('change', ()=>{
+    if (storeSelect.value === OTHER_VALUE){
+      storeOtherInput.style.display = 'block';
+      state.store = storeOtherInput.value.trim();
+    } else {
+      storeOtherInput.style.display = 'none';
+      state.store = storeSelect.value;
+    }
+  });
+
+  storeOtherInput.addEventListener('input', ()=>{
+    state.store = storeOtherInput.value.trim();
+  });
+
+  async function loadStoreList(){
+    // 1. キャッシュがあれば即表示（電波が悪くてもすぐ使える）
+    try{
+      const cached = JSON.parse(localStorage.getItem(STORE_LIST_KEY) || '[]');
+      if (cached.length) populateStoreSelect(cached);
+    }catch(e){ /* キャッシュ破損は無視 */ }
+
+    // 2. 最新の店舗マスタを取得してキャッシュを更新
+    if (!state.gasUrl) return;
+    try{
+      const res = await fetch(state.gasUrl + '?action=stores', { method:'GET' });
+      const json = await res.json();
+      if (json.ok && Array.isArray(json.stores)){
+        localStorage.setItem(STORE_LIST_KEY, JSON.stringify(json.stores));
+        populateStoreSelect(json.stores);
+      }
+    }catch(err){
+      // 取得失敗時はキャッシュ済みの一覧のまま使う（未読み込みなら手入力で対応）
+      if (!storeSelect.options.length){
+        populateStoreSelect([]);
+      }
+    }
+  }
+
   // ---------- events: overview ----------
   document.getElementById('addOverviewBtn').addEventListener('click', ()=>{
     document.getElementById('overviewInput').click();
@@ -496,6 +583,10 @@
       setStatus("車台番号の下6桁を入力（またはQR読み取り）してください。", true);
       return;
     }
+    if (!state.store){
+      setStatus("送り先店舗を選択（または手入力）してください。", true);
+      return;
+    }
     const totalPhotos = state.overview.length + state.damages.reduce((s,d)=>s+d.photos.length,0);
     if (!state.labelPhoto && totalPhotos === 0){
       setStatus("写真が1枚もありません。", true);
@@ -514,8 +605,9 @@
       const today = new Date();
       const dateStr = `${today.getFullYear()}/${String(today.getMonth()+1).padStart(2,'0')}/${String(today.getDate()).padStart(2,'0')}`;
       jpText(doc, `車台番号(下6桁): ${state.vin6}　　検査日: ${dateStr}`, margin, margin+8, 3.5);
+      jpText(doc, `送り先店舗: ${state.store}`, margin, margin+13.5, 3.5, {bold:true});
 
-      let cursorY = margin + 16;
+      let cursorY = margin + 21;
 
       if (state.labelPhoto){
         const boxW = 55, boxH = 40;
@@ -571,7 +663,7 @@
       function newDamagePage(){
         doc.addPage();
         px = margin; py = margin; pcol = 0;
-        jpText(doc, `傷の詳細 - 車台番号(下6桁): ${state.vin6}`, margin, 4, 4.2, {bold:true});
+        jpText(doc, `傷の詳細 - 車台番号(下6桁): ${state.vin6} / 送り先店舗: ${state.store}`, margin, 4, 4.2, {bold:true});
         py = margin + 6;
       }
 
@@ -636,7 +728,7 @@
       const res = await fetch(state.gasUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ vin6: state.vin6, fileName, pdfBase64: base64 })
+        body: JSON.stringify({ vin6: state.vin6, store: state.store, fileName, pdfBase64: base64 })
       });
       const rawText = await res.text();
       let json;
@@ -667,6 +759,7 @@
 
   renderOverview();
   renderDamages();
+  loadStoreList();
 })();
 </script>
 </body>
