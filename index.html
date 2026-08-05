@@ -116,7 +116,8 @@
     display:flex;align-items:center;justify-content:center;
   }
   .thumb-wrap{display:flex;flex-direction:column;gap:4px;}
-  .comment-input{
+  .comment-input,
+  .dloc-other{
     width:100%;
     font-size:11px;
     font-weight:400;
@@ -124,6 +125,19 @@
     padding:5px 6px;
     border:1px solid var(--border);
     border-radius:6px;
+  }
+  .dloc-select{
+    width:100%;
+    font-size:11px;
+    font-weight:600;
+    padding:5px 6px;
+    border-radius:6px;
+  }
+  .btn-toggle{
+    background:#fff;color:var(--accent2);
+    border:1px dashed var(--accent2);
+    font-size:11px;font-weight:600;
+    padding:5px 6px;border-radius:6px;
   }
   .damage-block{
     border:1px dashed var(--border);
@@ -237,19 +251,26 @@
   // 初期設定済みのGAS WebアプリURL（設定欄で上書きした場合はそちらが優先されます）
   const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbygzu_Mld3VVfyLdz0efLF75nMaJga5TjQwq_m_tMEJeKchwX_jsGVgGXD1pIXIbR78vw/exec';
   const STORE_LIST_KEY = 'pdi_store_list';
+  const DLOC_LIST_KEY = 'pdi_dloc_list';
   const OTHER_VALUE = '__other__';
 
   const state = {
     vin6: "",
     store: "",
     labelPhoto: null,      // {dataUrl,w,h}
-    overview: [],          // [{id,dataUrl,w,h}]
-    damages: [],           // [{id,name,photos:[{id,dataUrl,w,h}]}]
+    overview: [],          // [{id,dataUrl,w,h,comment}]
+    damages: [],           // [{id,name,photos:[{id,dataUrl,w,h,dlocation,comment}]}]
+    damageLocations: [],   // 「ダメージ箇所マスタ」の一覧(キャッシュ/取得結果)
     gasUrl: localStorage.getItem(GAS_URL_KEY) || DEFAULT_GAS_URL,
     lastPdfBase64: null,
     lastFileName: null,
     lastDoc: null
   };
+
+  function escapeHtml(s){
+    return (s || '').toString()
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
   let uid = 1;
   const newId = () => uid++;
 
@@ -336,6 +357,29 @@
     else { badge.textContent = "手入力"; badge.className = "badge"; }
   }
 
+  // コメント入力欄(トグル式)のHTMLを生成
+  function commentToggleMarkup(comment){
+    const hasComment = !!comment;
+    return `
+      <button type="button" class="btn-toggle comment-toggle">${hasComment ? '💬 コメントを編集' : '💬 コメント入力'}</button>
+      <input type="text" class="comment-input" maxlength="60" placeholder="コメント(任意)" style="display:${hasComment ? 'block' : 'none'};" value="${escapeHtml(comment)}">
+    `;
+  }
+
+  // コメント入力欄(トグル式)のイベントを配線
+  function wireCommentToggle(wrap, p){
+    const btn = wrap.querySelector('.comment-toggle');
+    const input = wrap.querySelector('.comment-input');
+    btn.addEventListener('click', ()=>{
+      const show = input.style.display === 'none';
+      input.style.display = show ? 'block' : 'none';
+      if (show) input.focus();
+    });
+    input.addEventListener('input', (e)=>{
+      p.comment = e.target.value;
+    });
+  }
+
   function renderOverview(){
     const list = document.getElementById('overviewList');
     const empty = document.getElementById('overviewEmpty');
@@ -346,15 +390,13 @@
       wrap.className = "thumb-wrap";
       wrap.innerHTML = `
         <div class="thumb"><img src="${p.dataUrl}"><button class="del" data-id="${p.id}">×</button></div>
-        <input type="text" class="comment-input" maxlength="60" placeholder="コメント(任意)" value="${(p.comment||'').replace(/"/g,'&quot;')}">
+        ${commentToggleMarkup(p.comment)}
       `;
       wrap.querySelector('.del').addEventListener('click', ()=>{
         state.overview = state.overview.filter(x=>x.id!==p.id);
         renderOverview();
       });
-      wrap.querySelector('.comment-input').addEventListener('input', (e)=>{
-        p.comment = e.target.value;
-      });
+      wireCommentToggle(wrap, p);
       list.appendChild(wrap);
     });
   }
@@ -382,17 +424,42 @@
       d.photos.forEach(p=>{
         const wrap = document.createElement('div');
         wrap.className = "thumb-wrap";
+        const inList = p.dlocation && state.damageLocations.includes(p.dlocation);
+        const isOther = !!p.dlocation && !inList;
+        let dlocOptions = '<option value="">箇所を選択</option>';
+        state.damageLocations.forEach(name=>{
+          dlocOptions += `<option value="${escapeHtml(name)}"${name===p.dlocation ? ' selected' : ''}>${escapeHtml(name)}</option>`;
+        });
+        dlocOptions += `<option value="${OTHER_VALUE}"${isOther ? ' selected' : ''}>その他（手入力）</option>`;
+
         wrap.innerHTML = `
           <div class="thumb"><img src="${p.dataUrl}"><button class="del" data-pid="${p.id}">×</button></div>
-          <input type="text" class="comment-input" maxlength="60" placeholder="コメント(例:傷の位置)" value="${(p.comment||'').replace(/"/g,'&quot;')}">
+          <select class="dloc-select">${dlocOptions}</select>
+          <input type="text" class="dloc-other" placeholder="箇所名を入力" style="display:${isOther ? 'block' : 'none'};" value="${isOther ? escapeHtml(p.dlocation) : ''}">
+          ${commentToggleMarkup(p.comment)}
         `;
         wrap.querySelector('.del').addEventListener('click', ()=>{
           d.photos = d.photos.filter(x=>x.id!==p.id);
           renderDamages();
         });
-        wrap.querySelector('.comment-input').addEventListener('input', (e)=>{
-          p.comment = e.target.value;
+
+        const dlocSelect = wrap.querySelector('.dloc-select');
+        const dlocOther = wrap.querySelector('.dloc-other');
+        dlocSelect.addEventListener('change', ()=>{
+          if (dlocSelect.value === OTHER_VALUE){
+            dlocOther.style.display = 'block';
+            p.dlocation = dlocOther.value.trim();
+            dlocOther.focus();
+          } else {
+            dlocOther.style.display = 'none';
+            p.dlocation = dlocSelect.value;
+          }
         });
+        dlocOther.addEventListener('input', ()=>{
+          p.dlocation = dlocOther.value.trim();
+        });
+
+        wireCommentToggle(wrap, p);
         photoGrid.appendChild(wrap);
       });
 
@@ -410,7 +477,7 @@
         setStatus("写真を処理中…");
         try{
           const resized = await resizeImageFile(file, 1400, 0.82);
-          d.photos.push({ id:newId(), ...resized, comment:'' });
+          d.photos.push({ id:newId(), ...resized, dlocation:'', comment:'' });
           renderDamages();
           setStatus("");
         }catch(err){
@@ -520,6 +587,32 @@
       if (!storeSelect.options.length){
         populateStoreSelect([]);
       }
+    }
+  }
+
+  // ---------- ダメージ箇所マスタ ----------
+  async function loadDamageLocationList(){
+    // 1. キャッシュがあれば即使う
+    try{
+      const cached = JSON.parse(localStorage.getItem(DLOC_LIST_KEY) || '[]');
+      if (cached.length){
+        state.damageLocations = cached;
+        renderDamages();
+      }
+    }catch(e){ /* キャッシュ破損は無視 */ }
+
+    // 2. 最新のダメージ箇所マスタを取得してキャッシュを更新
+    if (!state.gasUrl) return;
+    try{
+      const res = await fetch(state.gasUrl + '?action=damage_locations', { method:'GET' });
+      const json = await res.json();
+      if (json.ok && Array.isArray(json.locations)){
+        state.damageLocations = json.locations;
+        localStorage.setItem(DLOC_LIST_KEY, JSON.stringify(json.locations));
+        renderDamages();
+      }
+    }catch(err){
+      // 取得失敗時はキャッシュ済み(または空)のまま。選択肢が無くても手入力で対応可能。
     }
   }
 
@@ -719,7 +812,8 @@
           const oy = py + 5 + (imgAreaH-fit.h)/2;
           doc.setDrawColor(220);
           doc.rect(px, py, dCellW, dCellH);
-          jpText(doc, `傷${dIdx+1} - ${pIdx+1}`, px+2, py+1, 2.8, {bold:true});
+          const dLabel = `傷${dIdx+1}-${pIdx+1}` + (p.dlocation ? `：${p.dlocation}` : '');
+          jpText(doc, jpTruncate(dLabel, 2.8, dCellW-4, true), px+2, py+1, 2.8, {bold:true});
           doc.addImage(p.dataUrl, 'JPEG', ox, oy, fit.w, fit.h);
           if (p.comment){
             jpText(doc, jpTruncate(p.comment, 2.6, dCellW-4), px+2, py+dCellH-dCommentReserve+0.7, 2.6);
@@ -828,6 +922,7 @@
   renderOverview();
   renderDamages();
   loadStoreList();
+  loadDamageLocationList();
 })();
 </script>
 </body>
